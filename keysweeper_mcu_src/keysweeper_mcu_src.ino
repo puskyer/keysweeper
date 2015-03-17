@@ -30,12 +30,35 @@
  
  */
 
-// unknown packets:
-// chan 52 -> 
-//    08: f0f0 f0f0 3daf 6dc9   593d af6d c959 3df0 
-//    08: 0a0a 0a0a c755 9733   a3c7 5597 33a3 c70a 
-//    08: 0a0a 0a0a c755 9733   a3c7 5597 33a3 c70a 
-//    08: 0a0a 0a0a c755 9733   a3c7 5597 33a3 c70a 
+/*
+
+  Channels I've seen non-encrypted keyboards on: 
+  5, 9, 25, 44, 52
+  
+  Channels I've seen 2000 (AES) keyboard on:
+  3
+ 
+ unknown packets on unencrypted (could there be channel information here?):
+ chan 52 -> 
+ 08: f0f0 f0f0 3daf 6dc9   593d af6d c959 3df0 
+ 08: 0a0a 0a0a c755 9733   a3c7 5597 33a3 c70a 
+
+
+example of encrypted packets from AES keyboard (HID keycode 4 ('a'))
+MAC = 0xA8EE9A90CDLL
+     8: 08 38 16 01 01 00 F3 2A 
+     8: 56 56 56 56 56 56 56 56 
+    20: 09 98 16 01 F8 94 EB F5 45 66 1F DF DE FF E1 12 FC CF 44 91 
+    20: 0D 98 16 01 8A 22 20 1A 79 29 28 EE 21 E1 78 71 28 B2 C6 B4 
+    20: 09 98 16 01 1B 10 31 F3 F7 2A E1 F6 77 C5 F2 5E 00 6C B5 A3 
+     8: 08 38 16 01 C8 B2 00 A2 
+    20: 09 98 16 01 DF 34 82 79 F4 15 94 68 D6 B0 10 07 25 2F 37 53 
+    20: 08 08 08 08 08 08 08 08 08 08 08 08 08 08 08 08 08 08 08 08 
+    20: 09 98 16 01 FF 04 2F 16 50 50 BD 9F 8F 96 C8 C4 43 B3 3A 94 
+     8: 08 38 16 01 CA B2 00 A0 
+    20: 09 98 16 01 05 79 33 5C 5D 41 FD BA D4 98 FB 5D 48 CA DD 63 
+    20: 09 98 16 01 5B 8A F9 DF 90 87 15 D2 AA 80 48 6A B2 54 D0 F7 
+
 
 
 /* pins:
@@ -43,14 +66,21 @@
  1: (square): GND
  2: (next row of 4): 3.3 VCC 
  3: CE 9
- 4: CSN; 8
+ 4: CSN: 8
  5: SCK: 13
  6: MOSI 11
  7: MISO: 12
- 8: IRQ: not used here
+ 8: IRQ: not used for our purposes
  
  W25Q80BV flash:
- 
+ 1: CS: 10
+ 2: DO: 12
+ 3: WP: not used
+ 4: GND: GND
+ 5: DI: 11
+ 6: CLK: 13
+ 7: HOLD: not used
+ 8: VCC: 3.3 VCC
  
  */
 
@@ -599,12 +629,20 @@ void loop(void)
 //      return;      
 
     pr("    ");
+    if (sz < 10)
+      Serial.print(" ");
     Serial.print(sz);
     pr(": ");
-    for (int i = 0; i < PKT_SIZE/2; i++)
+    if (sz > PKT_SIZE) sz = PKT_SIZE;
+
+    for (int i = 0; i < sz/2; i++)
     {
+      if (p[i*2] < 16)
+        Serial.print("0");
       Serial.print(p[i*2], HEX);
       Serial.print(" ");
+      if (p[i*2+1] < 16)
+        Serial.print("0");
       Serial.print(p[i*2+1], HEX);
       Serial.print("  ");
     }
@@ -626,6 +664,7 @@ void loop(void)
       ch = gotKeystroke(p);
       for (int j = 0; j < PKT_SIZE; j++) op[j] = p[j];
     }
+    
   }
 
   if (ch == 'x')
@@ -804,6 +843,29 @@ void scan()
           { 
             channel--; // we incremented this AFTER we set it
             sp("KEYBOARD FOUND! Locking in on channel ");
+            Serial.println(channel);
+            EEPROM.write(E_LAST_CHAN, channel);
+
+            kbPipe = 0;
+            for (int i = 0; i < 4; i++)
+            {
+              kbPipe += p[i];
+              kbPipe <<= 8;
+            }
+            kbPipe += p[4];
+
+            // fix our checksum offset now that we have the MAC
+            cksum_key_offset  = ~(kbPipe >> 8 & 0xFF);
+            return;
+          }
+          
+          // handle finding Wireless Keyboard 2000 for Business (w/AES)
+          // we don't know how to crack yet, but let's at least dump packets
+          else if (((p[6] & 0x7F) << 1 == 0x09 && (p[7] << 1 == 0x98)) ||
+                   ((p[6] & 0x7F) << 1 == 0x08 && (p[7] << 1 == 0x38)))
+          {
+            channel--; // we incremented this AFTER we set it
+            sp("AES encrypted keyboard found! Locking in on channel ");
             Serial.println(channel);
             EEPROM.write(E_LAST_CHAN, channel);
 
